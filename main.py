@@ -176,16 +176,18 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             EC.presence_of_all_elements_located((By.XPATH, "//input[@type='file']"))
         )
 
-        # Prefer matching input by accept attribute, then fallback to any file input.
+        # First target file input tied to selected menu item; then fall back to all file inputs.
         preferred = []
+        targeted_input_xpath = (
+            "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]//input[@type='file']"
+            if media_file
+            else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]//input[@type='file']"
+        )
+        preferred.extend(driver.find_elements(By.XPATH, targeted_input_xpath))
+
         fallback = []
         for el in file_inputs:
-            accept = (el.get_attribute("accept") or "").lower()
-            if media_file and ("image" in accept or "video" in accept):
-                preferred.append(el)
-            elif (not media_file) and ("image" not in accept and "video" not in accept):
-                preferred.append(el)
-            else:
+            if el not in preferred:
                 fallback.append(el)
 
         candidates = preferred + fallback
@@ -216,19 +218,19 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
 
         # Caption may be in modal or in footer inline composer.
+        # If caption box isn't found, continue (message may already be prefilled in chat before attach).
         try:
             _set_attachment_caption(driver, caption, 12)
         except TimeoutException:
             if caption:
-                # last fallback: paste into normal footer composer if inline caption mode is used
                 try:
-                    footer_box = WebDriverWait(driver, 6).until(
+                    footer_box = WebDriverWait(driver, 4).until(
                         EC.element_to_be_clickable((By.XPATH, "//footer//div[@contenteditable='true']"))
                     )
                     footer_box.click()
                     footer_box.send_keys(caption)
                 except TimeoutException:
-                    return False, "Attachment uploaded but caption box not found"
+                    pass
 
         send_button = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable(
@@ -283,7 +285,7 @@ def process_rows(
                 workbook.save(excel_path)
                 continue
 
-            chat_text = "" if attachment else message
+            chat_text = message
             ok, reason = open_chat(driver, phone, chat_text)
             if not ok:
                 status = f"Failed: {reason}"
