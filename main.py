@@ -146,6 +146,34 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
     return False
 
 
+def _safe_click_send(driver: webdriver.Chrome, timeout: int) -> None:
+    """Click media send reliably across WA overlay/icon interception variants."""
+    send_button = WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]"))
+    )
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", send_button)
+
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]"))
+        )
+        send_button.click()
+        return
+    except (ElementClickInterceptedException, ElementNotInteractableException, TimeoutException):
+        pass
+
+    # WA sometimes intercepts click on button with nested span icon.
+    try:
+        icon = driver.find_element(By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]//span[@data-icon or @aria-hidden='true']")
+        driver.execute_script("arguments[0].click();", icon)
+        return
+    except Exception:
+        pass
+
+    # Final fallback via JS on button itself.
+    driver.execute_script("arguments[0].click();", send_button)
+
+
 def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45) -> Tuple[bool, str]:
     """Attach and send local file with optional caption in one message."""
     if not file_path:
@@ -242,15 +270,12 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
                 # Don't crash whole row if caption editor is temporarily covered by animation overlay.
                 pass
 
-        send_button = WebDriverWait(driver, timeout).until(
-            EC.element_to_be_clickable(
-                (By.XPATH, "//button[@aria-label='Send'] | //span[@data-icon='send']/ancestor::button")
-            )
-        )
-        send_button.click()
+        _safe_click_send(driver, timeout)
         return True, "Attachment sent with caption"
     except TimeoutException:
         return False, "Attachment failed: timeout waiting for attachment UI"
+    except Exception as exc:
+        return False, f"Attachment failed: {exc.__class__.__name__}"
 
 
 def write_result(sheet, row: int, status: str) -> None:
