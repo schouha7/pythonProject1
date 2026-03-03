@@ -161,41 +161,74 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         )
         attach_button.click()
 
-        # Click menu option first (this was missing and caused getting stuck with menu open).
+        # Try clicking menu entry first, but continue even if UI text changes.
         option_xpath = (
-            "//*[contains(normalize-space(),'Photos & videos')]/ancestor::*[@role='button' or self::li][1]"
+            "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]/ancestor::*[@role='button' or self::li][1]"
             if media_file
-            else "//*[contains(normalize-space(),'Document')]/ancestor::*[@role='button' or self::li][1]"
+            else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]/ancestor::*[@role='button' or self::li][1]"
         )
         try:
-            menu_option = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, option_xpath)))
-            menu_option.click()
+            WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.XPATH, option_xpath))).click()
         except TimeoutException:
             pass
 
-        input_xpath = (
-            "//input[@type='file' and contains(@accept,'image/*')]"
-            if media_file
-            else "(//input[@type='file' and not(contains(@accept,'image/*'))])[1]"
+        file_inputs = WebDriverWait(driver, timeout).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//input[@type='file']"))
         )
-        file_input = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.XPATH, input_xpath)))
 
-        driver.execute_script(
-            "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
-            file_input,
-        )
-        file_input.send_keys(str(resolved))
+        # Prefer matching input by accept attribute, then fallback to any file input.
+        preferred = []
+        fallback = []
+        for el in file_inputs:
+            accept = (el.get_attribute("accept") or "").lower()
+            if media_file and ("image" in accept or "video" in accept):
+                preferred.append(el)
+            elif (not media_file) and ("image" not in accept and "video" not in accept):
+                preferred.append(el)
+            else:
+                fallback.append(el)
 
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located(
-                (
-                    By.XPATH,
-                    "//button[@aria-label='Send'] | //span[@data-icon='send'] | //div[@role='dialog'] | //footer//div[@contenteditable='true'] | //img[contains(@src,'blob:')]",
+        candidates = preferred + fallback
+        uploaded = False
+        last_error = ""
+        for file_input in candidates:
+            try:
+                driver.execute_script(
+                    "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
+                    file_input,
                 )
-            )
-        )
+                file_input.send_keys(str(resolved))
+                # Uploaded when preview appears (blob image/video or media stage controls).
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (
+                            By.XPATH,
+                            "//img[contains(@src,'blob:')] | //video | //button[@aria-label='Send'] | //span[@data-icon='send']",
+                        )
+                    )
+                )
+                uploaded = True
+                break
+            except Exception as exc:
+                last_error = str(exc)
 
-        _set_attachment_caption(driver, caption, timeout)
+        if not uploaded:
+            return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
+
+        # Caption may be in modal or in footer inline composer.
+        try:
+            _set_attachment_caption(driver, caption, 12)
+        except TimeoutException:
+            if caption:
+                # last fallback: paste into normal footer composer if inline caption mode is used
+                try:
+                    footer_box = WebDriverWait(driver, 6).until(
+                        EC.element_to_be_clickable((By.XPATH, "//footer//div[@contenteditable='true']"))
+                    )
+                    footer_box.click()
+                    footer_box.send_keys(caption)
+                except TimeoutException:
+                    return False, "Attachment uploaded but caption box not found"
 
         send_button = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable(
