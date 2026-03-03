@@ -29,7 +29,6 @@ def now_str() -> str:
 
 
 def sanitize_phone_number(raw: object, default_country_code: Optional[str] = None) -> Optional[str]:
-    """Return WhatsApp-compatible phone number (digits only) or None if unusable."""
     if raw is None:
         return None
 
@@ -46,7 +45,6 @@ def sanitize_phone_number(raw: object, default_country_code: Optional[str] = Non
 
 
 def wait_for_login(driver: webdriver.Chrome, timeout: int = 240) -> None:
-    """Wait until WhatsApp Web is ready after QR scan/login."""
     print("Open WhatsApp Web and scan QR if required...")
     WebDriverWait(driver, timeout).until(
         EC.any_of(
@@ -56,6 +54,22 @@ def wait_for_login(driver: webdriver.Chrome, timeout: int = 240) -> None:
         )
     )
     print("WhatsApp login detected.")
+
+
+def dismiss_invalid_number_popup(driver: webdriver.Chrome, timeout: int = 3) -> None:
+    """Click OK on invalid-number popup if shown so script can proceed cleanly."""
+    candidates = [
+        "//button[normalize-space()='OK']",
+        "//div[@role='button' and normalize-space()='OK']",
+        "//button[.//span[normalize-space()='OK']]",
+    ]
+    for xp in candidates:
+        try:
+            btn = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((By.XPATH, xp)))
+            btn.click()
+            return
+        except TimeoutException:
+            continue
 
 
 def open_chat(driver: webdriver.Chrome, phone: str, message: str, timeout: int = 60) -> Tuple[bool, str]:
@@ -76,17 +90,18 @@ def open_chat(driver: webdriver.Chrome, phone: str, message: str, timeout: int =
             )
         )
     except TimeoutException:
+        dismiss_invalid_number_popup(driver)
         return False, "Timeout opening chat (number may be invalid/non-WhatsApp or network is slow)"
 
     for xp in invalid_xpaths:
         if driver.find_elements(By.XPATH, xp):
+            dismiss_invalid_number_popup(driver)
             return False, "Number not on WhatsApp or invalid"
 
     return True, "Chat opened"
 
 
 def send_text(driver: webdriver.Chrome, timeout: int = 20) -> Tuple[bool, str]:
-    """Send prefilled text by pressing Enter in composer."""
     try:
         input_box = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable((By.XPATH, "//footer//div[@contenteditable='true']"))
@@ -102,21 +117,25 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
     if not caption:
         return
 
-    caption_box = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located(
-            (
-                By.XPATH,
-                "//div[@role='dialog']//div[@contenteditable='true'][@data-tab or @spellcheck='true']"
-                " | //div[@role='dialog']//*[contains(@aria-label,'caption') and @contenteditable='true']",
-            )
-        )
-    )
-    caption_box.click()
-    caption_box.send_keys(caption)
+    caption_xpaths = [
+        "//div[@role='dialog']//div[contains(@aria-label,'caption') and @contenteditable='true']",
+        "//div[@role='dialog']//div[@contenteditable='true' and @data-tab='10']",
+        "//div[@role='dialog']//div[@contenteditable='true' and @spellcheck='true']",
+    ]
+    for xp in caption_xpaths:
+        try:
+            caption_box = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((By.XPATH, xp)))
+            caption_box.click()
+            caption_box.send_keys(caption)
+            return
+        except TimeoutException:
+            continue
+
+    raise TimeoutException("caption input not found")
 
 
 def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45) -> Tuple[bool, str]:
-    """Attach and send a local file (image/video/document) with optional caption in one message."""
+    """Attach and send local file with optional caption in one message."""
     if not file_path:
         return True, "No attachment"
 
@@ -132,37 +151,40 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')]]",
+                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')] or .//*[contains(@data-icon,'plus')]]",
                 )
             )
         )
         attach_button.click()
+
+        # Click menu option first (this was missing and caused getting stuck with menu open).
+        option_xpath = (
+            "//span[contains(.,'Photos & videos')]/ancestor::*[@role='button' or self::li][1]"
+            if media_file
+            else "//span[contains(.,'Document')]/ancestor::*[@role='button' or self::li][1]"
+        )
+        try:
+            menu_option = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, option_xpath)))
+            menu_option.click()
+        except TimeoutException:
+            pass
 
         input_xpath = (
             "//input[@type='file' and contains(@accept,'image/*')]"
             if media_file
             else "//input[@type='file' and not(contains(@accept,'image/*'))]"
         )
+        file_input = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.XPATH, input_xpath)))
 
-        file_input = WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.XPATH, input_xpath))
+        driver.execute_script(
+            "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
+            file_input,
         )
-
-        try:
-            driver.execute_script(
-                "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
-                file_input,
-            )
-            file_input.send_keys(str(resolved))
-        except Exception as exc:  # noqa: BLE001
-            return False, f"Attachment failed: could not upload file ({exc})"
+        file_input.send_keys(str(resolved))
 
         WebDriverWait(driver, timeout).until(
             EC.presence_of_element_located(
-                (
-                    By.XPATH,
-                    "//div[@role='dialog'] | //button[@aria-label='Send'] | //span[@data-icon='send']",
-                )
+                (By.XPATH, "//button[@aria-label='Send'] | //span[@data-icon='send'] | //div[@role='dialog']")
             )
         )
 
@@ -192,7 +214,8 @@ def process_rows(
     cooldown_every: int,
     cooldown_seconds: float,
 ) -> None:
-    workbook = load_workbook(excel_path)
+    keep_vba = excel_path.suffix.lower() == ".xlsm"
+    workbook = load_workbook(excel_path, keep_vba=keep_vba)
     if sheet_name not in workbook.sheetnames:
         raise WhatsAppAutomationError(f"Sheet '{sheet_name}' not found in {excel_path}")
 
@@ -219,8 +242,6 @@ def process_rows(
                 workbook.save(excel_path)
                 continue
 
-            # Important behavior: if attachment exists, message will be sent as attachment caption
-            # so text + file go together in one WhatsApp message.
             chat_text = "" if attachment else message
             ok, reason = open_chat(driver, phone, chat_text)
             if not ok:
