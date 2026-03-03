@@ -126,6 +126,8 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
     caption_xpaths = [
         "//div[@role='dialog']//div[contains(@aria-label,'caption') and @contenteditable='true']",
         "//div[@role='dialog']//div[@contenteditable='true' and @data-tab='10']",
+        "//div[@contenteditable='true' and @data-tab='10' and starts-with(@aria-label,'Type to')]",
+        "//footer//div[@contenteditable='true' and @data-tab='10' and @role='textbox']",
         "//div[contains(@aria-label,'Media') or @role='dialog']//div[@contenteditable='true' and @spellcheck='true']",
     ]
 
@@ -255,7 +257,7 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         # Strict mode: only accept caption inside media composer.
         caption_set = _set_attachment_caption(driver, caption, 15)
         if (not caption_set) and caption:
-            return False, "Attachment uploaded but caption box not found in media composer"
+            return False, "Attachment uploaded but caption box not found (WA UI variant)."
 
         _safe_click_send(driver, timeout)
         return True, "Attachment sent with caption"
