@@ -1,5 +1,6 @@
 import argparse
 import mimetypes
+import os
 import re
 import time
 from datetime import datetime
@@ -117,18 +118,21 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
     if not caption:
         return
 
+    # In latest WhatsApp Web, caption may appear either in a dialog or in bottom composer.
     caption_xpaths = [
         "//div[@role='dialog']//div[contains(@aria-label,'caption') and @contenteditable='true']",
         "//div[@role='dialog']//div[@contenteditable='true' and @data-tab='10']",
-        "//div[@role='dialog']//div[@contenteditable='true' and @spellcheck='true']",
+        "//footer//div[@contenteditable='true' and (@data-tab='10' or @data-tab='1')]",
+        "(//div[@contenteditable='true'])[last()]",
     ]
+
     for xp in caption_xpaths:
         try:
             caption_box = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((By.XPATH, xp)))
             caption_box.click()
             caption_box.send_keys(caption)
             return
-        except TimeoutException:
+        except Exception:
             continue
 
     raise TimeoutException("caption input not found")
@@ -159,9 +163,9 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
 
         # Click menu option first (this was missing and caused getting stuck with menu open).
         option_xpath = (
-            "//span[contains(.,'Photos & videos')]/ancestor::*[@role='button' or self::li][1]"
+            "//*[contains(normalize-space(),'Photos & videos')]/ancestor::*[@role='button' or self::li][1]"
             if media_file
-            else "//span[contains(.,'Document')]/ancestor::*[@role='button' or self::li][1]"
+            else "//*[contains(normalize-space(),'Document')]/ancestor::*[@role='button' or self::li][1]"
         )
         try:
             menu_option = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, option_xpath)))
@@ -172,7 +176,7 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         input_xpath = (
             "//input[@type='file' and contains(@accept,'image/*')]"
             if media_file
-            else "//input[@type='file' and not(contains(@accept,'image/*'))]"
+            else "(//input[@type='file' and not(contains(@accept,'image/*'))])[1]"
         )
         file_input = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.XPATH, input_xpath)))
 
@@ -184,7 +188,10 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
 
         WebDriverWait(driver, timeout).until(
             EC.presence_of_element_located(
-                (By.XPATH, "//button[@aria-label='Send'] | //span[@data-icon='send'] | //div[@role='dialog']")
+                (
+                    By.XPATH,
+                    "//button[@aria-label='Send'] | //span[@data-icon='send'] | //div[@role='dialog'] | //footer//div[@contenteditable='true'] | //img[contains(@src,'blob:')]",
+                )
             )
         )
 
@@ -213,6 +220,7 @@ def process_rows(
     pause_seconds: float,
     cooldown_every: int,
     cooldown_seconds: float,
+    open_excel_after: bool,
 ) -> None:
     keep_vba = excel_path.suffix.lower() == ".xlsm"
     workbook = load_workbook(excel_path, keep_vba=keep_vba)
@@ -272,6 +280,19 @@ def process_rows(
         workbook.save(excel_path)
         driver.quit()
 
+    if open_excel_after:
+        open_excel_file(excel_path)
+
+
+
+
+def open_excel_file(path: Path) -> None:
+    """Open output Excel file after run (best effort, mainly for Windows)."""
+    try:
+        if os.name == "nt":
+            os.startfile(str(path))
+    except Exception:
+        pass
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Send WhatsApp messages from Excel via WhatsApp Web.")
@@ -281,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pause", type=float, default=3.0, help="Pause between rows in seconds")
     parser.add_argument("--cooldown-every", type=int, default=9, help="Run cooldown every N processed rows (0 to disable)")
     parser.add_argument("--cooldown-seconds", type=float, default=42.0, help="Cooldown duration in seconds")
+    parser.add_argument("--open-excel-after", action="store_true", help="Open the Excel file after run (Windows)")
     return parser
 
 
@@ -302,6 +324,7 @@ def main() -> None:
         pause_seconds=args.pause,
         cooldown_every=args.cooldown_every,
         cooldown_seconds=args.cooldown_seconds,
+        open_excel_after=args.open_excel_after,
     )
 
 
