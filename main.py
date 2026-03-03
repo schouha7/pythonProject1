@@ -10,7 +10,11 @@ from urllib.parse import quote
 
 from openpyxl import load_workbook
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    TimeoutException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -114,9 +118,9 @@ def send_text(driver: webdriver.Chrome, timeout: int = 20) -> Tuple[bool, str]:
         return False, "Text send failed: composer not ready"
 
 
-def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int) -> None:
+def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int) -> bool:
     if not caption:
-        return
+        return True
 
     # In latest WhatsApp Web, caption may appear either in a dialog or in bottom composer.
     caption_xpaths = [
@@ -128,14 +132,18 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
 
     for xp in caption_xpaths:
         try:
-            caption_box = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((By.XPATH, xp)))
-            caption_box.click()
+            caption_box = WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.XPATH, xp)))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", caption_box)
+            try:
+                caption_box.click()
+            except (ElementClickInterceptedException, ElementNotInteractableException):
+                driver.execute_script("arguments[0].focus();", caption_box)
             caption_box.send_keys(caption)
-            return
+            return True
         except Exception:
             continue
 
-    raise TimeoutException("caption input not found")
+    return False
 
 
 def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45) -> Tuple[bool, str]:
@@ -218,19 +226,21 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
 
         # Caption may be in modal or in footer inline composer.
-        # If caption box isn't found, continue (message may already be prefilled in chat before attach).
-        try:
-            _set_attachment_caption(driver, caption, 12)
-        except TimeoutException:
-            if caption:
+        caption_set = _set_attachment_caption(driver, caption, 12)
+        if (not caption_set) and caption:
+            try:
+                footer_box = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, "//footer//div[@contenteditable='true']"))
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", footer_box)
                 try:
-                    footer_box = WebDriverWait(driver, 4).until(
-                        EC.element_to_be_clickable((By.XPATH, "//footer//div[@contenteditable='true']"))
-                    )
                     footer_box.click()
-                    footer_box.send_keys(caption)
-                except TimeoutException:
-                    pass
+                except (ElementClickInterceptedException, ElementNotInteractableException):
+                    driver.execute_script("arguments[0].focus();", footer_box)
+                footer_box.send_keys(caption)
+            except Exception:
+                # Don't crash whole row if caption editor is temporarily covered by animation overlay.
+                pass
 
         send_button = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable(
