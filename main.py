@@ -126,8 +126,7 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
     caption_xpaths = [
         "//div[@role='dialog']//div[contains(@aria-label,'caption') and @contenteditable='true']",
         "//div[@role='dialog']//div[@contenteditable='true' and @data-tab='10']",
-        "//footer//div[@contenteditable='true' and (@data-tab='10' or @data-tab='1')]",
-        "(//div[@contenteditable='true'])[last()]",
+        "//div[contains(@aria-label,'Media') or @role='dialog']//div[@contenteditable='true' and @spellcheck='true']",
     ]
 
     for xp in caption_xpaths:
@@ -253,22 +252,10 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         if not uploaded:
             return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
 
-        # Caption may be in modal or in footer inline composer.
-        caption_set = _set_attachment_caption(driver, caption, 12)
+        # Strict mode: only accept caption inside media composer.
+        caption_set = _set_attachment_caption(driver, caption, 15)
         if (not caption_set) and caption:
-            try:
-                footer_box = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, "//footer//div[@contenteditable='true']"))
-                )
-                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", footer_box)
-                try:
-                    footer_box.click()
-                except (ElementClickInterceptedException, ElementNotInteractableException):
-                    driver.execute_script("arguments[0].focus();", footer_box)
-                footer_box.send_keys(caption)
-            except Exception:
-                # Don't crash whole row if caption editor is temporarily covered by animation overlay.
-                pass
+            return False, "Attachment uploaded but caption box not found in media composer"
 
         _safe_click_send(driver, timeout)
         return True, "Attachment sent with caption"
@@ -320,7 +307,7 @@ def process_rows(
                 workbook.save(excel_path)
                 continue
 
-            chat_text = message
+            chat_text = "" if attachment else message
             ok, reason = open_chat(driver, phone, chat_text)
             if not ok:
                 status = f"Failed: {reason}"
