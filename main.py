@@ -178,7 +178,7 @@ def _safe_click_send(driver: webdriver.Chrome, timeout: int) -> None:
     driver.execute_script("arguments[0].click();", send_button)
 
 
-def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45) -> Tuple[bool, str]:
+def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45, try_caption: bool = True) -> Tuple[bool, str]:
     """Attach and send local file with optional caption in one message."""
     if not file_path:
         return True, "No attachment"
@@ -257,12 +257,16 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         if not uploaded:
             return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
 
-        caption_set = _set_attachment_caption(driver, caption, 15)
+        caption_set = True
+        if try_caption and caption:
+            caption_set = _set_attachment_caption(driver, caption, 15)
 
         _safe_click_send(driver, timeout)
-        if caption and not caption_set:
+        if try_caption and caption and not caption_set:
             return True, "Attachment sent (caption textbox not detected)"
-        return True, "Attachment sent with caption"
+        if try_caption and caption:
+            return True, "Attachment sent with caption"
+        return True, "Attachment sent"
     except TimeoutException:
         return False, "Attachment failed: timeout waiting for attachment UI"
     except Exception as exc:
@@ -282,6 +286,7 @@ def process_rows(
     cooldown_every: int,
     cooldown_seconds: float,
     open_excel_after: bool,
+    attachment_message_mode: str,
 ) -> None:
     keep_vba = excel_path.suffix.lower() == ".xlsm"
     workbook = load_workbook(excel_path, keep_vba=keep_vba)
@@ -321,16 +326,32 @@ def process_rows(
                 continue
 
             if attachment:
-                media_ok, media_reason = send_attachment(driver, attachment, caption=message)
-                if media_ok and "caption textbox not detected" in media_reason.lower():
+                use_caption = attachment_message_mode == "caption"
+                media_ok, media_reason = send_attachment(
+                    driver,
+                    attachment,
+                    caption=message if use_caption else "",
+                    try_caption=use_caption,
+                )
+                if not media_ok:
+                    final_status = f"Failed: {media_reason}"
+                elif use_caption:
+                    if "caption textbox not detected" in media_reason.lower():
+                        txt_ok, txt_reason = send_text(driver, text=message)
+                        final_status = (
+                            "Sent attachment + separate text (caption unavailable)"
+                            if txt_ok
+                            else f"Attachment sent, text fallback failed ({txt_reason})"
+                        )
+                    else:
+                        final_status = "Sent attachment + caption"
+                else:
                     txt_ok, txt_reason = send_text(driver, text=message)
                     final_status = (
-                        "Sent attachment + separate text (caption unavailable)"
+                        "Sent attachment + separate text"
                         if txt_ok
-                        else f"Attachment sent, text fallback failed ({txt_reason})"
+                        else f"Attachment sent, text failed ({txt_reason})"
                     )
-                else:
-                    final_status = "Sent attachment + caption" if media_ok else f"Failed: {media_reason}"
             else:
                 txt_ok, txt_reason = send_text(driver)
                 final_status = "Sent text" if txt_ok else f"Failed: {txt_reason}"
@@ -372,6 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cooldown-every", type=int, default=9, help="Run cooldown every N processed rows (0 to disable)")
     parser.add_argument("--cooldown-seconds", type=float, default=42.0, help="Cooldown duration in seconds")
     parser.add_argument("--open-excel-after", action="store_true", help="Open the Excel file after run (Windows)")
+    parser.add_argument("--attachment-message-mode", choices=["separate_text", "caption"], default="separate_text", help="How to send message when attachment exists: separate text (default) or caption")
     return parser
 
 
@@ -394,6 +416,7 @@ def main() -> None:
         cooldown_every=args.cooldown_every,
         cooldown_seconds=args.cooldown_seconds,
         open_excel_after=args.open_excel_after,
+        attachment_message_mode=args.attachment_message_mode,
     )
 
 
