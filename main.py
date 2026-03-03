@@ -106,12 +106,14 @@ def open_chat(driver: webdriver.Chrome, phone: str, message: str, timeout: int =
     return True, "Chat opened"
 
 
-def send_text(driver: webdriver.Chrome, timeout: int = 20) -> Tuple[bool, str]:
+def send_text(driver: webdriver.Chrome, text: Optional[str] = None, timeout: int = 20) -> Tuple[bool, str]:
     try:
         input_box = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable((By.XPATH, "//footer//div[@contenteditable='true']"))
         )
         input_box.click()
+        if text:
+            input_box.send_keys(text)
         input_box.send_keys("\n")
         return True, "Text sent"
     except TimeoutException:
@@ -309,7 +311,7 @@ def process_rows(
                 workbook.save(excel_path)
                 continue
 
-            chat_text = message
+            chat_text = "" if attachment else message
             ok, reason = open_chat(driver, phone, chat_text)
             if not ok:
                 status = f"Failed: {reason}"
@@ -320,7 +322,15 @@ def process_rows(
 
             if attachment:
                 media_ok, media_reason = send_attachment(driver, attachment, caption=message)
-                final_status = "Sent attachment + caption" if media_ok else f"Failed: {media_reason}"
+                if media_ok and "caption textbox not detected" in media_reason.lower():
+                    txt_ok, txt_reason = send_text(driver, text=message)
+                    final_status = (
+                        "Sent attachment + separate text (caption unavailable)"
+                        if txt_ok
+                        else f"Attachment sent, text fallback failed ({txt_reason})"
+                    )
+                else:
+                    final_status = "Sent attachment + caption" if media_ok else f"Failed: {media_reason}"
             else:
                 txt_ok, txt_reason = send_text(driver)
                 final_status = "Sent text" if txt_ok else f"Failed: {txt_reason}"
