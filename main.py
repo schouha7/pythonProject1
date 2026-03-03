@@ -128,6 +128,7 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
         "//div[@role='dialog']//div[@contenteditable='true' and @data-tab='10']",
         "//div[@contenteditable='true' and @data-tab='10' and starts-with(@aria-label,'Type to')]",
         "//footer//div[@contenteditable='true' and @data-tab='10' and @role='textbox']",
+        "//div[@contenteditable='true' and @role='textbox' and starts-with(@aria-label,'Type to +')]",
         "//div[contains(@aria-label,'Media') or @role='dialog']//div[@contenteditable='true' and @spellcheck='true']",
     ]
 
@@ -254,12 +255,11 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         if not uploaded:
             return False, f"Attachment failed: could not upload via available file inputs ({last_error or 'unknown'})"
 
-        # Strict mode: only accept caption inside media composer.
         caption_set = _set_attachment_caption(driver, caption, 15)
-        if (not caption_set) and caption:
-            return False, "Attachment uploaded but caption box not found (WA UI variant)."
 
         _safe_click_send(driver, timeout)
+        if caption and not caption_set:
+            return True, "Attachment sent (caption textbox not detected)"
         return True, "Attachment sent with caption"
     except TimeoutException:
         return False, "Attachment failed: timeout waiting for attachment UI"
@@ -309,7 +309,7 @@ def process_rows(
                 workbook.save(excel_path)
                 continue
 
-            chat_text = "" if attachment else message
+            chat_text = message
             ok, reason = open_chat(driver, phone, chat_text)
             if not ok:
                 status = f"Failed: {reason}"
