@@ -1,4 +1,5 @@
 import argparse
+import mimetypes
 import re
 import time
 from datetime import datetime
@@ -123,6 +124,9 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
     if not resolved.exists() or not resolved.is_file():
         return False, f"Attachment not found: {resolved}"
 
+    mime_type, _ = mimetypes.guess_type(str(resolved))
+    media_file = bool(mime_type and (mime_type.startswith("image/") or mime_type.startswith("video/")))
+
     try:
         attach_button = WebDriverWait(driver, timeout).until(
             EC.element_to_be_clickable(
@@ -134,23 +138,33 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
         )
         attach_button.click()
 
-        file_inputs = WebDriverWait(driver, timeout).until(
-            EC.presence_of_all_elements_located((By.XPATH, "//input[@type='file']"))
+        input_xpath = (
+            "//input[@type='file' and contains(@accept,'image/*')]"
+            if media_file
+            else "//input[@type='file' and not(contains(@accept,'image/*'))]"
         )
 
-        upload_ok = False
-        last_error = ""
-        for file_input in reversed(file_inputs):
-            try:
-                driver.execute_script("arguments[0].style.display='block'; arguments[0].style.visibility='visible';", file_input)
-                file_input.send_keys(str(resolved))
-                upload_ok = True
-                break
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
+        file_input = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.XPATH, input_xpath))
+        )
 
-        if not upload_ok:
-            return False, f"Attachment failed: could not upload file ({last_error or 'unknown error'})"
+        try:
+            driver.execute_script(
+                "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
+                file_input,
+            )
+            file_input.send_keys(str(resolved))
+        except Exception as exc:  # noqa: BLE001
+            return False, f"Attachment failed: could not upload file ({exc})"
+
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located(
+                (
+                    By.XPATH,
+                    "//div[@role='dialog'] | //button[@aria-label='Send'] | //span[@data-icon='send']",
+                )
+            )
+        )
 
         _set_attachment_caption(driver, caption, timeout)
 
