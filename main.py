@@ -151,41 +151,45 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
 
 
 def _safe_click_send(driver: webdriver.Chrome, timeout: int) -> None:
-    """Click media send reliably across WA overlay/icon interception variants."""
-    send_button_xpath = (
+    """Click media send reliably across WhatsApp Web UI variants."""
+    target_xpath = (
         "//button[@aria-label='Send' and not(@aria-disabled='true')]"
         " | //button[@data-tab='11' and not(@aria-disabled='true')]"
-        " | //span[contains(@data-icon,'send')]/ancestor::button[1]"
+        " | //span[contains(@data-icon,'send')]/ancestor::*[self::button or self::div][1]"
+        " | //div[@role='button'][.//span[contains(@data-icon,'send')]]"
+        " | //span[contains(@data-icon,'send')]"
     )
 
-    send_button = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.XPATH, send_button_xpath))
+    target = WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.XPATH, target_xpath))
     )
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", send_button)
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
 
     try:
-        WebDriverWait(driver, timeout).until(
-            EC.element_to_be_clickable((By.XPATH, send_button_xpath))
-        )
-        send_button.click()
+        target.click()
         return
-    except (ElementClickInterceptedException, ElementNotInteractableException, TimeoutException):
+    except (ElementClickInterceptedException, ElementNotInteractableException):
         pass
 
     try:
-        icon = driver.find_element(
-            By.XPATH,
-            "(//button[@aria-label='Send' and not(@aria-disabled='true')]"
-            " | //button[@data-tab='11' and not(@aria-disabled='true')]"
-            " | //span[contains(@data-icon,'send')]/ancestor::button[1])"
-            "//*[self::span[contains(@data-icon,'send')] or self::span[@aria-hidden='true']]",
-        )
-        driver.execute_script("arguments[0].click();", icon)
+        driver.execute_script("arguments[0].click();", target)
         return
     except Exception:
         pass
 
-    driver.execute_script("arguments[0].click();", send_button)
+    # Final fallback: click the most visible send icon / parent near bottom-right media stage.
+    fallback = driver.find_elements(
+        By.XPATH,
+        "(//span[contains(@data-icon,'send')] | //button[@aria-label='Send'] | //button[@data-tab='11'] | //div[@role='button'][.//span[contains(@data-icon,'send')]])",
+    )
+    for elem in reversed(fallback):
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", elem)
+            return
+        except Exception:
+            continue
+
+    raise TimeoutException("send control not clickable")
 
 
 def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "", timeout: int = 45, try_caption: bool = True) -> Tuple[bool, str]:
