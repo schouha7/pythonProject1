@@ -195,7 +195,7 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')] or .//*[contains(@data-icon,'plus')]",
+                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')] or .//*[contains(@data-icon,'plus')]]",
                 )
             )
         )
