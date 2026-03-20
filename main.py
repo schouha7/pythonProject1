@@ -195,42 +195,40 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')] or .//*[contains(@data-icon,'plus')]]",
+                    "//button[@title='Attach' or @aria-label='Attach' or .//span[@data-icon='plus'] or .//*[contains(@data-testid,'attach')] or .//*[contains(@data-icon,'plus')]",
                 )
             )
         )
         attach_button.click()
 
-        # Try clicking menu entry first, but continue even if UI text changes.
-        option_xpath = (
-            "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]/ancestor::*[@role='button' or self::li][1]"
-            if media_file
-            else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]/ancestor::*[@role='button' or self::li][1]"
-        )
-        try:
-            WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.XPATH, option_xpath))).click()
-        except TimeoutException:
-            pass
-
         file_inputs = WebDriverWait(driver, timeout).until(
             EC.presence_of_all_elements_located((By.XPATH, "//input[@type='file']"))
         )
 
-        # First target file input tied to selected menu item; then fall back to all file inputs.
-        preferred = []
-        targeted_input_xpath = (
-            "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]//input[@type='file']"
-            if media_file
-            else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]//input[@type='file']"
-        )
-        preferred.extend(driver.find_elements(By.XPATH, targeted_input_xpath))
+        # In separate_text mode, keep flow minimal (WA often blocks caption UI under automation).
+        if not try_caption:
+            candidates = list(file_inputs)
+        else:
+            option_xpath = (
+                "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]/ancestor::*[@role='button' or self::li][1]"
+                if media_file
+                else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]/ancestor::*[@role='button' or self::li][1]"
+            )
+            try:
+                WebDriverWait(driver, 4).until(EC.element_to_be_clickable((By.XPATH, option_xpath))).click()
+            except TimeoutException:
+                pass
 
-        fallback = []
-        for el in file_inputs:
-            if el not in preferred:
-                fallback.append(el)
+            preferred = []
+            targeted_input_xpath = (
+                "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'photos') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'video')]//input[@type='file']"
+                if media_file
+                else "//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'document')]//input[@type='file']"
+            )
+            preferred.extend(driver.find_elements(By.XPATH, targeted_input_xpath))
+            fallback = [el for el in file_inputs if el not in preferred]
+            candidates = preferred + fallback
 
-        candidates = preferred + fallback
         uploaded = False
         last_error = ""
         for file_input in candidates:
@@ -240,7 +238,6 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
                     file_input,
                 )
                 file_input.send_keys(str(resolved))
-                # Uploaded when preview appears (blob image/video or media stage controls).
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located(
                         (
