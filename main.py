@@ -152,29 +152,39 @@ def _set_attachment_caption(driver: webdriver.Chrome, caption: str, timeout: int
 
 def _safe_click_send(driver: webdriver.Chrome, timeout: int) -> None:
     """Click media send reliably across WA overlay/icon interception variants."""
+    send_button_xpath = (
+        "//button[@aria-label='Send' and not(@aria-disabled='true')]"
+        " | //button[@data-tab='11' and not(@aria-disabled='true')]"
+        " | //span[contains(@data-icon,'send')]/ancestor::button[1]"
+    )
+
     send_button = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]"))
+        EC.presence_of_element_located((By.XPATH, send_button_xpath))
     )
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", send_button)
 
     try:
         WebDriverWait(driver, timeout).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]"))
+            EC.element_to_be_clickable((By.XPATH, send_button_xpath))
         )
         send_button.click()
         return
     except (ElementClickInterceptedException, ElementNotInteractableException, TimeoutException):
         pass
 
-    # WA sometimes intercepts click on button with nested span icon.
     try:
-        icon = driver.find_element(By.XPATH, "//button[@aria-label='Send' and not(@aria-disabled='true')]//span[@data-icon or @aria-hidden='true']")
+        icon = driver.find_element(
+            By.XPATH,
+            "(//button[@aria-label='Send' and not(@aria-disabled='true')]"
+            " | //button[@data-tab='11' and not(@aria-disabled='true')]"
+            " | //span[contains(@data-icon,'send')]/ancestor::button[1])"
+            "//*[self::span[contains(@data-icon,'send')] or self::span[@aria-hidden='true']]",
+        )
         driver.execute_script("arguments[0].click();", icon)
         return
     except Exception:
         pass
 
-    # Final fallback via JS on button itself.
     driver.execute_script("arguments[0].click();", send_button)
 
 
@@ -242,7 +252,7 @@ def send_attachment(driver: webdriver.Chrome, file_path: str, caption: str = "",
                     EC.presence_of_element_located(
                         (
                             By.XPATH,
-                            "//img[contains(@src,'blob:')] | //video | //button[@aria-label='Send'] | //span[@data-icon='send']",
+                            "//img[contains(@src,'blob:')] | //video | //button[@aria-label='Send'] | //button[@data-tab='11'] | //span[contains(@data-icon,'send')]",
                         )
                     )
                 )
